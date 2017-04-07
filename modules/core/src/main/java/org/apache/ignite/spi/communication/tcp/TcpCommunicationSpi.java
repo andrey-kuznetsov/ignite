@@ -23,6 +23,7 @@ import java.io.OutputStream;
 import java.net.ConnectException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -3192,8 +3193,7 @@ public class TcpCommunicationSpi extends IgniteSpiAdapter implements Communicati
                     errs.addSuppressed(new IgniteCheckedException("Failed to connect to address: " + addr, e));
 
                     // Reconnect for the second time, if connection is not established.
-                    if (!failureDetThrReached && connectAttempts < 2 &&
-                        (e instanceof ConnectException || X.hasCause(e, ConnectException.class))) {
+                    if (!failureDetThrReached && connectAttempts < 3 && isRetryException(e)) {
                         connectAttempts++;
 
                         continue;
@@ -3213,15 +3213,14 @@ public class TcpCommunicationSpi extends IgniteSpiAdapter implements Communicati
         if (client == null) {
             assert errs != null;
 
-            if (X.hasCause(errs, ConnectException.class))
+            if (X.hasCause(errs, SocketException.class, SocketTimeoutException.class))
                 log.warning("Failed to connect to a remote node " +
                     "(make sure that destination node is alive and " +
                     "operating system firewall is disabled on local and remote hosts) " +
                     "[addrs=" + addrs + ']');
 
             if (getSpiContext().node(node.id()) != null && (CU.clientNode(node) || !CU.clientNode(getLocalNode())) &&
-                X.hasCause(errs, ConnectException.class, SocketTimeoutException.class, HandshakeTimeoutException.class,
-                    IgniteSpiOperationTimeoutException.class)) {
+                isRetryException(errs)) {
 
                 log.warning("TcpCommunicationSpi failed to establish connection to node, node will be dropped from " +
                     "cluster [" +
@@ -3247,6 +3246,19 @@ public class TcpCommunicationSpi extends IgniteSpiAdapter implements Communicati
         }
 
         return client;
+    }
+
+    /**
+     * @param e Throwable to check.
+     * @return {@code True} if connect should be retried.
+     */
+    private boolean isRetryException(Throwable e) {
+        return X.hasCause(e,
+            ConnectException.class,
+            SocketException.class,
+            SocketTimeoutException.class,
+            HandshakeTimeoutException.class,
+            IgniteSpiOperationTimeoutException.class);
     }
 
     /**
