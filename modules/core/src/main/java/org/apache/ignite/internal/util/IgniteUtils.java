@@ -1270,15 +1270,15 @@ public abstract class IgniteUtils {
      * @param log Logger.
      */
     public static void dumpThreads(@Nullable IgniteLogger log) {
-        ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
-
-        final Set<Long> deadlockedThreadsIds = getDeadlockedThreadIds(mxBean);
+        final Set<Long> deadlockedThreadsIds = getDeadlockedThreadIds();
 
         if (deadlockedThreadsIds.size() == 0)
             warn(log, "No deadlocked threads detected.");
         else
             warn(log, "Deadlocked threads detected (see thread dump below) " +
                 "[deadlockedThreadsCnt=" + deadlockedThreadsIds.size() + ']');
+
+        ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
 
         ThreadInfo[] threadInfos =
             mxBean.dumpAllThreads(mxBean.isObjectMonitorUsageSupported(), mxBean.isSynchronizerUsageSupported());
@@ -1305,11 +1305,10 @@ public abstract class IgniteUtils {
 
     /**
      * Get deadlocks from the thread bean.
-     * @param mxBean the bean
      * @return the set of deadlocked threads (may be empty Set, but never null).
      */
-    private static Set<Long> getDeadlockedThreadIds(ThreadMXBean mxBean) {
-        final long[] deadlockedIds = mxBean.findDeadlockedThreads();
+    public static Set<Long> getDeadlockedThreadIds() {
+        final long[] deadlockedIds = ManagementFactory.getThreadMXBean().findDeadlockedThreads();
 
         final Set<Long> deadlockedThreadsIds;
 

@@ -198,6 +198,7 @@ import org.jetbrains.annotations.Nullable;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_BINARY_MARSHALLER_USE_STRING_SERIALIZATION_VER_2;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_CONFIG_URL;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_DAEMON;
+import static org.apache.ignite.IgniteSystemProperties.IGNITE_DEADLOCK_CHECK_INTERVAL;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_NO_ASCII;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_OPTIMIZED_MARSHALLER_USE_DEFAULT_SUID;
 import static org.apache.ignite.IgniteSystemProperties.IGNITE_REST_START_ON_CLIENT;
@@ -342,6 +343,10 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
     /** */
     @GridToStringExclude
     private GridTimeoutProcessor.CancelableTask starveTask;
+
+    /** */
+    @GridToStringExclude
+    private GridTimeoutProcessor.CancelableTask deadlockCheckerTask;
 
     /** */
     @GridToStringExclude
@@ -1172,6 +1177,8 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
             }, interval, interval);
         }
 
+        setUpDeadlockChecker();
+
         long metricsLogFreq = cfg.getMetricsLogFrequency();
 
         if (metricsLogFreq > 0) {
@@ -1316,6 +1323,23 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
 
         if (!isDaemon())
             ctx.discovery().ackTopology(localNode().order());
+    }
+
+    /**
+     * Enables periodic deadlock checker if it's configured via system properties.
+     */
+    private void setUpDeadlockChecker() {
+        long interval = IgniteSystemProperties.getLong(IGNITE_DEADLOCK_CHECK_INTERVAL, 0);
+
+        if (interval > 0) {
+            deadlockCheckerTask = ctx.timeout().schedule(new Runnable() {
+                @Override public void run() {
+                    if (!U.getDeadlockedThreadIds().isEmpty())
+                        // TODO: IGNITE-6893, update some metrics here.
+                        LT.warn(log, "Deadlocked threads detected!");
+                }
+            }, interval, interval);
+        }
     }
 
     /**
@@ -2217,6 +2241,9 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
 
             if (starveTask != null)
                 starveTask.close();
+
+            if (deadlockCheckerTask != null)
+                deadlockCheckerTask.close();
 
             if (metricsLogTask != null)
                 metricsLogTask.close();

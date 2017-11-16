@@ -94,6 +94,12 @@ public final class IgniteSystemProperties {
     public static final String IGNITE_STARVATION_CHECK_INTERVAL = "IGNITE_STARVATION_CHECK_INTERVAL";
 
     /**
+     * This system property defines interval in milliseconds in which Ignite will check
+     * JVM for deadlocked threads. Zero value will disable this checker.
+     */
+    public static final String IGNITE_DEADLOCK_CHECK_INTERVAL = "IGNITE_DEADLOCK_CHECK_INTERVAL";
+
+    /**
      * If this system property is present (any value) - no ASCII logo will
      * be printed.
      */
