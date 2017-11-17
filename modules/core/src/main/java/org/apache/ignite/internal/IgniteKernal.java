@@ -1334,9 +1334,16 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
         if (interval > 0) {
             deadlockCheckerTask = ctx.timeout().schedule(new Runnable() {
                 @Override public void run() {
-                    if (!U.getDeadlockedThreadIds().isEmpty())
-                        // TODO: IGNITE-6893, update some metrics here.
+                    if (!U.getDeadlockedThreadIds().isEmpty()) {
+                        // TODO: IGNITE-6893, report deadlock somewhere.
                         LT.warn(log, "Deadlocked threads detected!");
+
+                        new Thread() {
+                            @Override public void run() {
+                                System.exit(Ignition.KILL_EXIT_CODE);
+                            }
+                        }.start();
+                    }
                 }
             }, interval, interval);
         }
