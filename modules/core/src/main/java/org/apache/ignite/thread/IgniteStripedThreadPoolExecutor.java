@@ -18,15 +18,17 @@
 package org.apache.ignite.thread;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.apache.ignite.internal.util.typedef.internal.S;
 import org.jetbrains.annotations.NotNull;
@@ -36,7 +38,10 @@ import org.jetbrains.annotations.NotNull;
  */
 public class IgniteStripedThreadPoolExecutor implements ExecutorService {
     /** */
-    private final ExecutorService[] execs;
+    private final ThreadPoolExecutor[] execs;
+
+    /** */
+    private final long completedCntrs[];
 
     /**
      * Create striped thread pool.
@@ -46,12 +51,18 @@ public class IgniteStripedThreadPoolExecutor implements ExecutorService {
      * @param threadNamePrefix Thread name prefix.
      */
     public IgniteStripedThreadPoolExecutor(int concurrentLvl, String igniteInstanceName, String threadNamePrefix) {
-        execs = new ExecutorService[concurrentLvl];
+        execs = new ThreadPoolExecutor[concurrentLvl];
 
         ThreadFactory factory = new IgniteThreadFactory(igniteInstanceName, threadNamePrefix);
 
         for (int i = 0; i < concurrentLvl; i++)
-            execs[i] = Executors.newSingleThreadExecutor(factory);
+            execs[i] = new ThreadPoolExecutor(1, 1,
+                0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<Runnable>(), factory);
+
+        completedCntrs = new long[concurrentLvl];
+
+        Arrays.fill(completedCntrs, -1);
     }
 
     /**
@@ -74,6 +85,25 @@ public class IgniteStripedThreadPoolExecutor implements ExecutorService {
      */
     public int threadId(int idx) {
         return idx < execs.length ? idx : idx % execs.length;
+    }
+
+    /**
+     * Determines whether starvation possible. This method is not thread-safe.
+     */
+    public boolean isStarvationPossible() {
+        for (int i = 0; i < execs.length; i++) {
+            ThreadPoolExecutor exec = execs[i];
+
+            long completedCnt = exec.getCompletedTaskCount();
+
+            if (completedCntrs[i] != -1 && completedCntrs[i] == completedCnt &&
+                exec.getActiveCount() > 0 && !exec.getQueue().isEmpty())
+                return true;
+
+            completedCntrs[i] = completedCnt;
+        }
+
+        return false;
     }
 
     /** {@inheritDoc} */

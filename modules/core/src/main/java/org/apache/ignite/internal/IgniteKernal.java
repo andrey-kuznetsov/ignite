@@ -1113,63 +1113,31 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
         // Mark start timestamp.
         startTime = U.currentTimeMillis();
 
-        String intervalStr = IgniteSystemProperties.getString(IGNITE_STARVATION_CHECK_INTERVAL);
+        final long interval = IgniteSystemProperties.getLong(IGNITE_STARVATION_CHECK_INTERVAL, 0);
 
-        // Start starvation checker if enabled.
-        boolean starveCheck = !isDaemon() && !"0".equals(intervalStr);
+        if (!isDaemon() && interval > 0) {
+            HashMap<String, ExecutorService> execSvcs = new HashMap<>();
 
-        if (starveCheck) {
-            final long interval = F.isEmpty(intervalStr) ? PERIODIC_STARVATION_CHECK_FREQ : Long.parseLong(intervalStr);
+            execSvcs.put("utility cache", utilityCachePool);
+            execSvcs.put("public", execSvc);
+            execSvcs.put("service", svcExecSvc);
+            execSvcs.put("system", sysExecSvc);
+            execSvcs.put("stripedPool", stripedExecSvc);
+            execSvcs.put("management", stripedExecSvc);
+            execSvcs.put("peer class loading", p2pExecSvc);
+            execSvcs.put("IGFS", igfsExecSvc);
+            execSvcs.put("data-streamer", dataStreamExecSvc);
+            execSvcs.put("async callback", callbackExecSvc);
+            execSvcs.put("connector", restExecSvc);
+            execSvcs.put("affinity", affExecSvc);
+            execSvcs.put("index", idxExecSvc);
+            execSvcs.put("query", qryExecSvc);
+            execSvcs.put("schema", schemaExecSvc);
 
-            starveTask = ctx.timeout().schedule(new Runnable() {
-                /** Last completed task count. */
-                private long lastCompletedCntPub;
+            if (customExecSvcs != null)
+                execSvcs.putAll(customExecSvcs);
 
-                /** Last completed task count. */
-                private long lastCompletedCntSys;
-
-                @Override public void run() {
-                    if (execSvc instanceof ThreadPoolExecutor) {
-                        ThreadPoolExecutor exec = (ThreadPoolExecutor)execSvc;
-
-                        lastCompletedCntPub = checkPoolStarvation(exec, lastCompletedCntPub, "public");
-                    }
-
-                    if (sysExecSvc instanceof ThreadPoolExecutor) {
-                        ThreadPoolExecutor exec = (ThreadPoolExecutor)sysExecSvc;
-
-                        lastCompletedCntSys = checkPoolStarvation(exec, lastCompletedCntSys, "system");
-                    }
-
-                    if (stripedExecSvc != null)
-                        stripedExecSvc.checkStarvation();
-                }
-
-                /**
-                 * @param exec Thread pool executor to check.
-                 * @param lastCompletedCnt Last completed tasks count.
-                 * @param pool Pool name for message.
-                 * @return Current completed tasks count.
-                 */
-                private long checkPoolStarvation(
-                    ThreadPoolExecutor exec,
-                    long lastCompletedCnt,
-                    String pool
-                ) {
-                    long completedCnt = exec.getCompletedTaskCount();
-
-                    // If all threads are active and no task has completed since last time and there is
-                    // at least one waiting request, then it is possible starvation.
-                    if (exec.getPoolSize() == exec.getActiveCount() && completedCnt == lastCompletedCnt &&
-                        !exec.getQueue().isEmpty())
-                        LT.warn(
-                            log,
-                            "Possible thread pool starvation detected (no task completed in last " +
-                                interval + "ms, is " + pool + " thread pool size large enough?)");
-
-                    return completedCnt;
-                }
-            }, interval, interval);
+            setUpStarvationChecker(execSvcs, interval);
         }
 
         long metricsLogFreq = cfg.getMetricsLogFrequency();
@@ -1316,6 +1284,84 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
 
         if (!isDaemon())
             ctx.discovery().ackTopology(localNode().order());
+    }
+
+    /**
+     * Enables periodic thread starvation checker.
+     *
+     * @param execSvcs executor services to check.
+     * @param interval check interval in milliseconds.
+     */
+    private void setUpStarvationChecker(final Map<String, ExecutorService> execSvcs, final long interval) {
+        final Collection<Runnable> checks = new ArrayList<>();
+
+        for (final Map.Entry<String, ExecutorService> entry : execSvcs.entrySet()) {
+            final ExecutorService svc = entry.getValue();
+
+            if (svc instanceof ThreadPoolExecutor)
+                checks.add(new StarvationCheck((ThreadPoolExecutor)svc, entry.getKey(), interval));
+            else if (svc instanceof StripedExecutor)
+                checks.add(new Runnable() {
+                    @Override public void run() {
+                        ((StripedExecutor)svc).checkStarvation();
+                    }
+                });
+            else if (svc instanceof IgniteStripedThreadPoolExecutor)
+                checks.add(new Runnable() {
+                    @Override public void run() {
+                        if (((IgniteStripedThreadPoolExecutor)svc).isStarvationPossible())
+                            LT.warn(log,
+                                "Possible thread starvation detected for " + entry.getKey() +
+                                    " pool (no task completed in last " + interval + "ms)");
+                    }
+                });
+        }
+
+        starveTask = ctx.timeout().schedule(new Runnable() {
+            @Override public void run() {
+                for (Runnable check : checks)
+                    check.run();
+            }
+        }, interval, interval);
+    }
+
+    /** */
+    private class StarvationCheck implements Runnable {
+
+        /** */
+        final ThreadPoolExecutor exec;
+
+        /** */
+        final String execName;
+
+        /** */
+        final long interval;
+
+        /** */
+        long lastCompletedTaskCnt;
+
+        /** */
+        StarvationCheck(ThreadPoolExecutor exec, String execName, long interval) {
+            this.exec = exec;
+            this.execName = execName;
+            this.interval = interval;
+        }
+
+        /** {@inheritDoc} */
+        @Override public void run() {
+            long completedCnt = exec.getCompletedTaskCount();
+
+            // If all threads are active and no task has completed since last time and there is
+            // at least one waiting request, then it is possible starvation.
+            if (exec.getPoolSize() == exec.getActiveCount() && completedCnt == lastCompletedTaskCnt &&
+                !exec.getQueue().isEmpty())
+                LT.warn(
+                    log,
+                    "Possible thread pool starvation detected (no task completed in last " +
+                        interval + "ms, is " + execName + " thread pool size large enough?)");
+
+            lastCompletedTaskCnt = completedCnt;
+        }
     }
 
     /**
