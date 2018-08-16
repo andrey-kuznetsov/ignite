@@ -250,6 +250,11 @@ public final class IgniteSystemProperties {
     public static final String IGNITE_TX_DEADLOCK_DETECTION_TIMEOUT = "IGNITE_TX_DEADLOCK_DETECTION_TIMEOUT";
 
     /**
+     * System property to enable pending transaction tracker.
+     */
+    public static final String IGNITE_PENDING_TX_TRACKER_ENABLED = "IGNITE_PENDING_TX_TRACKER_ENABLED";
+
+    /**
      * System property to override multicast group taken from configuration.
      * Used for testing purposes.
      */
@@ -935,6 +940,16 @@ public final class IgniteSystemProperties {
      * Default is 500 ms.
      */
     public static final String IGNITE_UNWIND_THROTTLING_TIMEOUT = "IGNITE_UNWIND_THROTTLING_TIMEOUT";
+
+    /**
+     * Threshold for throttling operations logging.
+     */
+    public static final String IGNITE_THROTTLE_LOG_THRESHOLD = "IGNITE_THROTTLE_LOG_THRESHOLD";
+
+    /**
+     * Number of concurrent operation for evict partitions.
+     */
+    public static final String IGNITE_EVICTION_PERMITS = "IGNITE_EVICTION_PERMITS";
 
     /**
      * Enforces singleton.

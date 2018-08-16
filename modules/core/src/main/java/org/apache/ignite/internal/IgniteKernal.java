@@ -163,6 +163,8 @@ import org.apache.ignite.internal.processors.session.GridTaskSessionProcessor;
 import org.apache.ignite.internal.processors.subscription.GridInternalSubscriptionProcessor;
 import org.apache.ignite.internal.processors.task.GridTaskProcessor;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutProcessor;
+import org.apache.ignite.internal.processors.txdr.NoOpTransactionalDrProcessor;
+import org.apache.ignite.internal.processors.txdr.TransactionalDrProcessor;
 import org.apache.ignite.internal.suggestions.GridPerformanceSuggestions;
 import org.apache.ignite.internal.suggestions.JvmConfigurationSuggestions;
 import org.apache.ignite.internal.suggestions.OsConfigurationSuggestions;
@@ -969,6 +971,9 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
             // Start security processors.
             startProcessor(createComponent(GridSecurityProcessor.class, ctx));
 
+            // Start transactional data replication processor.
+            startProcessor(createComponent(TransactionalDrProcessor.class, ctx));
+
             // Start SPI managers.
             // NOTE: that order matters as there are dependencies between managers.
             startManager(new GridIoManager(ctx));
@@ -1110,7 +1115,7 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
                     catch (IgniteNeedReconnectException e) {
                         ClusterNode locNode = ctx.discovery().localNode();
 
-                        assert CU.clientNode(locNode);
+                        assert locNode.isClient();
 
                         if (!locNode.isClient())
                             throw new IgniteCheckedException("Client node in forceServerMode " +
@@ -1588,8 +1593,7 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
         // Warn about loopback.
         if (ips.isEmpty() && macs.isEmpty())
             U.warn(log, "Ignite is starting on loopback address... Only nodes on the same physical " +
-                    "computer can participate in topology.",
-                "Ignite is starting on loopback address...");
+                "computer can participate in topology.");
 
         // Stick in network context into attributes.
         add(ATTR_IPS, (ips.isEmpty() ? "" : ips));
@@ -2515,9 +2519,7 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
             U.warn(
                 log,
                 "Peer class loading is enabled (disable it in production for performance and " +
-                    "deployment consistency reasons)",
-                "Peer class loading is enabled (disable it for better performance)"
-            );
+                    "deployment consistency reasons)");
     }
 
     /**
@@ -3933,6 +3935,9 @@ public class IgniteKernal implements IgniteEx, IgniteMXBean, Externalizable {
 
         if (cls.equals(IGridClusterStateProcessor.class))
             return (T)new GridClusterStateProcessor(ctx);
+
+        if (cls.equals(TransactionalDrProcessor.class))
+            return (T)new NoOpTransactionalDrProcessor(ctx);
 
         Class<T> implCls = null;
 
