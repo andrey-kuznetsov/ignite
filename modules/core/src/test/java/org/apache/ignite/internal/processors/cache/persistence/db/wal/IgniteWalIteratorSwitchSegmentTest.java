@@ -143,7 +143,6 @@ public class IgniteWalIteratorSwitchSegmentTest extends GridCommonAbstractTest {
                 null,
                 null,
                 null,
-
                 null)
         ).createSerializer(serVer);
 

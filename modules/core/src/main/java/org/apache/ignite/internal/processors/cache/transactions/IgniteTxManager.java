@@ -209,6 +209,9 @@ public class IgniteTxManager extends GridCacheSharedManagerAdapter {
     /** Flag indicates that {@link TxRecord} records will be logged to WAL. */
     private boolean logTxRecords;
 
+    /** Pending transactions tracker. */
+    private LocalPendingTransactionsTracker pendingTracker;
+
     /** {@inheritDoc} */
     @Override protected void onKernalStop0(boolean cancel) {
         cctx.gridIO().removeMessageListener(TOPIC_TX);
@@ -284,7 +287,10 @@ public class IgniteTxManager extends GridCacheSharedManagerAdapter {
 
         cctx.gridIO().addMessageListener(TOPIC_TX, new DeadlockDetectionListener());
 
-        this.logTxRecords = IgniteSystemProperties.getBoolean(IGNITE_WAL_LOG_TX_RECORDS, false);
+        // todo gg-13416 unhardcode
+        this.logTxRecords = IgniteSystemProperties.getBoolean(IGNITE_WAL_LOG_TX_RECORDS, true);
+
+        this.pendingTracker = new LocalPendingTransactionsTracker(cctx);
     }
 
     /**
@@ -2394,6 +2400,13 @@ public class IgniteTxManager extends GridCacheSharedManagerAdapter {
      */
     public boolean logTxRecords() {
         return logTxRecords;
+    }
+
+    /**
+     *
+     */
+    public LocalPendingTransactionsTracker pendingTxsTracker() {
+        return pendingTracker;
     }
 
     /**
