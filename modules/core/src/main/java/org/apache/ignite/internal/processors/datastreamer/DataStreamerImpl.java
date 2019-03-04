@@ -296,6 +296,10 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
         assert ctx != null;
 
         this.ctx = ctx;
+        this.cacheName = cacheName;
+
+        checkSecurityPermission(SecurityPermission.CACHE_PUT);
+
         this.cacheObjProc = ctx.cacheObjects();
 
         if (log == null)
@@ -310,7 +314,6 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
             throw new IgniteException("Failed to initialize cache context.", e);
         }
 
-        this.cacheName = cacheName;
         this.flushQ = flushQ;
 
         discoLsnr = new GridLocalEventListener() {
@@ -425,7 +428,7 @@ public class DataStreamerImpl<K, V> implements IgniteDataStreamer<K, V>, Delayed
 
     /**
      * Acquires read or write lock.
-     * 
+     *
      * @param writeLock {@code True} if acquires write lock.
      */
     private void lock(boolean writeLock) {

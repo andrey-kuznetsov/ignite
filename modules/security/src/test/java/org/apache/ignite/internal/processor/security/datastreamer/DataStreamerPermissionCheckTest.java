@@ -17,14 +17,21 @@
 
 package org.apache.ignite.internal.processor.security.datastreamer;
 
+import java.util.Collection;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteDataStreamer;
+import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processor.security.AbstractCacheOperationPermissionCheckTest;
+import org.apache.ignite.internal.processor.security.TestSecurityContext;
+import org.apache.ignite.internal.processor.security.TestSecuritySubject;
 import org.apache.ignite.internal.util.typedef.X;
+import org.apache.ignite.plugin.security.SecurityBasicPermissionSet;
 import org.apache.ignite.plugin.security.SecurityException;
 import org.apache.ignite.plugin.security.SecurityPermission;
+import org.apache.ignite.plugin.security.SecurityPermissionSet;
+import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -40,70 +47,116 @@ import static org.junit.Assert.assertThat;
 @RunWith(JUnit4.class)
 public class DataStreamerPermissionCheckTest extends AbstractCacheOperationPermissionCheckTest {
     /**
-     * @throws Exception If fail.
+     * @throws Exception If failed.
+     */
+    @Test
+    public void testDataStreamerCreationWithPutPermission() throws Exception {
+        startGrid(loginPrefix(false) + "_test_node", getPermissionSet()).dataStreamer(CACHE_NAME).close();
+    }
+
+    /**
+     * @throws Exception If failed.
+     */
+    @Test(expected = SecurityException.class)
+    public void testDataStreamerCreationWithoutPutPermission() throws Exception {
+        startGrid(loginPrefix(false) + "_test_node", getPermissionSet()).dataStreamer(FORBIDDEN_CACHE);
+    }
+
+    /**
+     * @throws Exception If failed.
      */
     @Test
     public void testServerNode() throws Exception {
-        testDataStreamer(false);
+        testDataStreamer(startGrid(loginPrefix(false) + "_test_node", getPermissionSet(), false));
     }
 
     /**
-     * @throws Exception If fail.
+     * @throws Exception If failed.
      */
     @Test
     public void testClientNode() throws Exception {
-        testDataStreamer(true);
+        startGrid(loginPrefix(false) + "_test_node", getPermissionSet(), false);
+
+        testDataStreamer(startGrid(loginPrefix(true) + "_test_node", getPermissionSet(), true));
     }
 
     /**
-     * @param isClient True if is client mode.
-     * @throws Exception If fail.
+     *
      */
-    private void testDataStreamer(boolean isClient) throws Exception {
-        Ignite node = startGrid(loginPrefix(isClient) + "_test_node",
-            builder()
-                .appendCachePermissions(CACHE_NAME, SecurityPermission.CACHE_PUT)
-                .appendCachePermissions(FORBIDDEN_CACHE, SecurityPermission.CACHE_READ)
-                .build(), isClient);
+    @After
+    public void after() {
+        stopAllGrids();
+    }
 
-        allowed(node, s -> s.addData("k", 1));
-        forbidden(node, s -> s.addData("k", 1));
+    /**
+     *
+     */
+    private SecurityPermissionSet getPermissionSet() {
+        return builder()
+            .appendCachePermissions(CACHE_NAME, SecurityPermission.CACHE_PUT)
+            .appendCachePermissions(FORBIDDEN_CACHE, SecurityPermission.CACHE_READ)
+            .build();
+    }
 
-        allowed(node, s -> s.addData(singletonMap("key", 2)));
-        forbidden(node, s -> s.addData(singletonMap("key", 2)));
+    /**
+     * @param node Ignite node to run test on.
+     */
+    private void testDataStreamer(Ignite node) {
+        performOnAllowedCache(node, s -> s.addData("k", 1));
+        performOnForbiddenCache(node, s -> s.addData("k", 1));
+
+        performOnAllowedCache(node, s -> s.addData(singletonMap("key", 2)));
+        performOnForbiddenCache(node, s -> s.addData(singletonMap("key", 2)));
 
         Map.Entry<String, Integer> entry = entry();
 
-        allowed(node, s -> s.addData(entry));
-        forbidden(node, s -> s.addData(entry));
+        performOnAllowedCache(node, s -> s.addData(entry));
+        performOnForbiddenCache(node, s -> s.addData(entry));
 
-        allowed(node, s -> s.addData(singletonList(entry())));
-        forbidden(node, s -> s.addData(singletonList(entry())));
-
+        performOnAllowedCache(node, s -> s.addData(singletonList(entry())));
+        performOnForbiddenCache(node, s -> s.addData(singletonList(entry())));
     }
 
     /**
-     * @param node Node.
-     * @param c Consumer.
+     * @param node Ignite node to run test on.
+     * @param streamerAction action to perform with streamer.
      */
-    private void allowed(Ignite node, Consumer<IgniteDataStreamer<String, Integer>> c) {
+    private void performOnAllowedCache(Ignite node, Consumer<IgniteDataStreamer<String, Integer>> streamerAction) {
         try (IgniteDataStreamer<String, Integer> s = node.dataStreamer(CACHE_NAME)) {
-            c.accept(s);
+            streamerAction.accept(s);
         }
     }
 
     /**
-     * @param node Node.
-     * @param c Consumer.
+     * @param node Ignite node to run test on.
+     * @param streamerAction action to perform with streamer.
      */
-    private void forbidden(Ignite node, Consumer<IgniteDataStreamer<String, Integer>> c) {
-        try (IgniteDataStreamer<String, Integer> s = node.dataStreamer(FORBIDDEN_CACHE)) {
-            c.accept(s);
+    private void performOnForbiddenCache(Ignite node, Consumer<IgniteDataStreamer<String, Integer>> streamerAction) {
+        IgniteEx nodeEx = (IgniteEx)node;
 
-            fail("Should not happen");
-        }
-        catch (Throwable e) {
-            assertThat(X.cause(e, SecurityException.class), notNullValue());
+        TestSecurityContext secCtx = (TestSecurityContext)nodeEx.context().security().securityContext();
+
+        TestSecuritySubject secSubj = (TestSecuritySubject)secCtx.subject();
+
+        SecurityBasicPermissionSet permSet = (SecurityBasicPermissionSet)secSubj.permissions();
+
+        Collection<SecurityPermission> cachePerms = permSet.cachePermissions().get(FORBIDDEN_CACHE);
+
+        assertFalse(cachePerms.contains(SecurityPermission.CACHE_PUT));
+
+        cachePerms.add(SecurityPermission.CACHE_PUT);
+
+        try (IgniteDataStreamer<String, Integer> s = node.dataStreamer(FORBIDDEN_CACHE)) {
+            cachePerms.remove(SecurityPermission.CACHE_PUT);
+
+            try {
+                streamerAction.accept(s);
+
+                fail("Should not happen");
+            }
+            catch (Throwable e) {
+                assertThat(X.cause(e, SecurityException.class), notNullValue());
+            }
         }
     }
 }
