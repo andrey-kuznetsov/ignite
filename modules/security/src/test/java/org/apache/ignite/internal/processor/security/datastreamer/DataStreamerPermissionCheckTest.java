@@ -93,7 +93,7 @@ public class DataStreamerPermissionCheckTest extends AbstractCacheOperationPermi
      */
     private SecurityPermissionSet getPermissionSet() {
         return builder()
-            .appendCachePermissions(CACHE_NAME, SecurityPermission.CACHE_PUT)
+            .appendCachePermissions(CACHE_NAME, SecurityPermission.CACHE_PUT, SecurityPermission.CACHE_REMOVE)
             .appendCachePermissions(FORBIDDEN_CACHE, SecurityPermission.CACHE_READ)
             .build();
     }
@@ -115,6 +115,9 @@ public class DataStreamerPermissionCheckTest extends AbstractCacheOperationPermi
 
         performOnAllowedCache(node, s -> s.addData(singletonList(entry())));
         performOnForbiddenCache(node, s -> s.addData(singletonList(entry())));
+
+        performOnAllowedCache(node, s -> s.removeData("k"));
+        performOnForbiddenCache(node, s -> s.removeData("k"));
     }
 
     /**
@@ -143,11 +146,14 @@ public class DataStreamerPermissionCheckTest extends AbstractCacheOperationPermi
         Collection<SecurityPermission> cachePerms = permSet.cachePermissions().get(FORBIDDEN_CACHE);
 
         assertFalse(cachePerms.contains(SecurityPermission.CACHE_PUT));
+        assertFalse(cachePerms.contains(SecurityPermission.CACHE_REMOVE));
 
         cachePerms.add(SecurityPermission.CACHE_PUT);
+        cachePerms.add(SecurityPermission.CACHE_REMOVE);
 
         try (IgniteDataStreamer<String, Integer> s = node.dataStreamer(FORBIDDEN_CACHE)) {
             cachePerms.remove(SecurityPermission.CACHE_PUT);
+            cachePerms.remove(SecurityPermission.CACHE_REMOVE);
 
             try {
                 streamerAction.accept(s);
