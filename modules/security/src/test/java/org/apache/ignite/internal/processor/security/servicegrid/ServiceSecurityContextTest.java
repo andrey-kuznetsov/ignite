@@ -210,15 +210,15 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
 
         svcs.cancel(TEST_SERVICE_NAME);
 
-        assertNull("IMDBGG-1483", cache1.get("kInitPut"));
-        assertNull("IMDBGG-1617", cache1.get("kExecPut"));
+        assertNull(cache1.get("kInitPut"));
+        assertNull(cache1.get("kExecPut"));
         assertNull(cache1.get("kInvokePut"));
-        assertNull("IMDBGG-1483", cache1.get("kCancelPut"));
+        assertNull(cache1.get("kCancelPut"));
 
-        assertEquals("IMDBGG-1483", "vInitRemove", cache1.get("kInitRemove"));
-        assertEquals("IMDBGG-1617", "vExecRemove", cache1.get("kExecRemove"));
+        assertEquals("vInitRemove", cache1.get("kInitRemove"));
+        assertEquals("vExecRemove", cache1.get("kExecRemove"));
         assertEquals("vInvokeRemove", cache1.get("kInvokeRemove"));
-        assertEquals("IMDBGG-1483", "vCancelRemove", cache1.get("kCancelRemove"));
+        assertEquals("vCancelRemove", cache1.get("kCancelRemove"));
     }
 
     /**
@@ -319,15 +319,15 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
         svcs.cancel(derivingTestSrvcName);
         assertTrue(GridTestUtils.waitForCondition(() -> DerivingTestServiceImpl.cancelled, 3000));
 
-        assertNull("IMDBGG-1483", cache1.get("kInitPut"));
-        assertNull("IMDBGG-1617", cache1.get("kExecPut"));
+        assertNull(cache1.get("kInitPut"));
+        assertNull(cache1.get("kExecPut"));
         assertNull(cache1.get("kInvokePut"));
-        assertNull("IMDBGG-1483", cache1.get("kCancelPut"));
+        assertNull(cache1.get("kCancelPut"));
 
-        assertEquals("IMDBGG-1483", "vInitRemove", cache1.get("kInitRemove"));
-        assertEquals("IMDBGG-1617", "vExecRemove", cache1.get("kExecRemove"));
+        assertEquals("vInitRemove", cache1.get("kInitRemove"));
+        assertEquals("vExecRemove", cache1.get("kExecRemove"));
         assertEquals("vInvokeRemove", cache1.get("kInvokeRemove"));
-        assertEquals("IMDBGG-1483", "vCancelRemove", cache1.get("kCancelRemove"));
+        assertEquals("vCancelRemove", cache1.get("kCancelRemove"));
     }
 
     /**
