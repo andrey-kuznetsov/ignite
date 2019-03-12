@@ -17,16 +17,31 @@
 
 package org.apache.ignite.internal.processor.security.servicegrid;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.function.BinaryOperator;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
+import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteServices;
+import org.apache.ignite.cluster.ClusterNode;
+import org.apache.ignite.compute.ComputeJob;
+import org.apache.ignite.compute.ComputeJobAdapter;
+import org.apache.ignite.compute.ComputeJobResult;
+import org.apache.ignite.compute.ComputeTaskAdapter;
 import org.apache.ignite.internal.processor.security.AbstractSecurityTest;
+import org.apache.ignite.internal.util.typedef.X;
 import org.apache.ignite.plugin.security.SecurityException;
 import org.apache.ignite.plugin.security.SecurityPermissionSet;
 import org.apache.ignite.resources.IgniteInstanceResource;
 import org.apache.ignite.services.Service;
 import org.apache.ignite.services.ServiceContext;
 import org.apache.ignite.testframework.GridTestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -39,12 +54,13 @@ import static org.apache.ignite.plugin.security.SecurityPermission.CACHE_REMOVE;
 import static org.apache.ignite.plugin.security.SecurityPermission.SERVICE_CANCEL;
 import static org.apache.ignite.plugin.security.SecurityPermission.SERVICE_DEPLOY;
 import static org.apache.ignite.plugin.security.SecurityPermission.SERVICE_INVOKE;
+import static org.apache.ignite.plugin.security.SecurityPermission.TASK_EXECUTE;
 
 /**
- * Testing permissions on cache operations in services.
+ * Testing permissions on various operations in services.
  */
 @RunWith(JUnit4.class)
-public class ServiceSecurityContextCacheOperationsTest extends AbstractSecurityTest {
+public class ServiceSecurityContextTest extends AbstractSecurityTest {
     /** */
     private static final String TEST_SERVICE_NAME = "testService";
 
@@ -203,8 +219,6 @@ public class ServiceSecurityContextCacheOperationsTest extends AbstractSecurityT
         assertEquals("IMDBGG-1617", "vExecRemove", cache1.get("kExecRemove"));
         assertEquals("vInvokeRemove", cache1.get("kInvokeRemove"));
         assertEquals("IMDBGG-1483", "vCancelRemove", cache1.get("kCancelRemove"));
-
-        stopAllGrids();
     }
 
     /**
@@ -314,8 +328,120 @@ public class ServiceSecurityContextCacheOperationsTest extends AbstractSecurityT
         assertEquals("IMDBGG-1617", "vExecRemove", cache1.get("kExecRemove"));
         assertEquals("vInvokeRemove", cache1.get("kInvokeRemove"));
         assertEquals("IMDBGG-1483", "vCancelRemove", cache1.get("kCancelRemove"));
+    }
 
-        stopAllGrids();
+    /**
+     *
+     */
+    private static class ComputeTestServiceImpl implements TestService {
+        /** */
+        @IgniteInstanceResource
+        Ignite ignite;
+
+        /**
+         *
+         */
+        @Override public void init(ServiceContext ctx) {
+            // No-op.
+        }
+
+        /**
+         *
+         */
+        @Override public void execute(ServiceContext ctx) {
+            // No-op.
+        }
+
+        /**
+         *
+         */
+        @Override public void cancel(ServiceContext ctx) {
+            // No-op.
+        }
+
+        /**
+         *
+         */
+        @Override public void run() {
+            ignite.compute().execute(TestComputeTask.class, null);
+        }
+    }
+
+    /**
+     *
+     */
+    private static class TestComputeTask extends ComputeTaskAdapter<Void, Integer> {
+        /** */
+        static final BinaryOperator<Integer> reducer = (a, b) -> (a + b) % 10;
+
+        /** {@inheritDoc} */
+        @Override public @Nullable Map<? extends ComputeJob, ClusterNode> map(
+            List<ClusterNode> subgrid,
+            @Nullable Void arg) throws IgniteException {
+
+            Map<ComputeJobAdapter, ClusterNode> result = new HashMap<>();
+
+            for (ClusterNode node : subgrid) {
+                List<Integer> ints = IntStream.generate(new Random()::nextInt)
+                    .limit(100)
+                    .boxed()
+                    .collect(Collectors.toList());
+
+                System.out.println("*** adding job for node " + node.id());
+                result.put(new ComputeJobAdapter() {
+                    @Override public Integer execute() throws IgniteException {
+                        return ints.stream().reduce(0, reducer);
+                    }
+                }, node);
+            }
+
+            return result;
+        }
+
+        /** {@inheritDoc} */
+        @Nullable @Override public Integer reduce(List<ComputeJobResult> results) throws IgniteException {
+            return results.stream().map(ComputeJobResult::getData).map(Integer.class::cast).reduce(0, reducer);
+        }
+    }
+
+    /**
+     *
+     */
+    @Test
+    public void testComputeInService() throws Exception {
+        String computeTestSrvcName = "computeTestSrvcName";
+
+        SecurityPermissionSet permSet0 = builder()
+            .appendServicePermissions(computeTestSrvcName, SERVICE_DEPLOY, SERVICE_INVOKE, SERVICE_CANCEL)
+            .appendTaskPermissions(TestComputeTask.class.getName())
+            .build();
+
+        SecurityPermissionSet permSet1 = builder()
+            .appendTaskPermissions(TestComputeTask.class.getName(), TASK_EXECUTE)
+            .build();
+
+        String testLogin = "scott";
+
+        Ignite ignite0 = startGrid("node0", testLogin, "", permSet0);
+
+        startGrid("node1", testLogin, "", permSet1);
+
+        ignite0.cluster().active(true);
+
+        IgniteServices svcs = remoteServices(ignite0);
+
+        svcs.deployNodeSingleton(computeTestSrvcName, new ComputeTestServiceImpl());
+
+        Runnable svcProxy = svcs.serviceProxy(computeTestSrvcName, Runnable.class, true);
+
+        try {
+            svcProxy.run();
+
+            fail();
+        }
+        catch (Exception e) {
+            assertTrue(X.hasCause(e, IgniteException.class));
+        }
     }
 
     /**
