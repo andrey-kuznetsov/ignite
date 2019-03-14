@@ -15,7 +15,19 @@
  * limitations under the License.
  */
 
+package org.apache.ignite.jdbc.thin;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import org.apache.ignite.internal.jdbc2.JdbcAbstractSchemaCaseTest;
+
 /**
- * Contains security tests for Data Streamer closure.
+ * Jdbc thin test for schema name case (in)sensitivity.
  */
-package org.apache.ignite.internal.processor.security.datastreamer.closure;
+public class JdbcThinSchemaCaseSelfTest extends JdbcAbstractSchemaCaseTest {
+    /** {@inheritDoc} */
+    @Override protected Connection connect(String schema) throws SQLException {
+        return DriverManager.getConnection("jdbc:ignite:thin://127.0.0.1/" + schema);
+    }
+}

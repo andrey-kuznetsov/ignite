@@ -15,7 +15,36 @@
  * limitations under the License.
  */
 
+package org.apache.ignite.internal.commandline.baseline;
+
+import org.apache.ignite.internal.commandline.argument.CommandArg;
+
 /**
- * Contains security tests for caches.
+ * {@link BaselineCommand#AUTO_ADJUST} command arguments.
  */
-package org.apache.ignite.internal.processor.security.cache;
+public enum AutoAdjustCommandArg implements CommandArg {
+    /** Enable auto-adjust. */
+    ENABLE("enable"),
+    /** Disable auto-adjust. */
+    DISABLE("disable"),
+    /** Set soft timeout. */
+    TIMEOUT("timeout");
+
+    /** Option name. */
+    private final String name;
+
+    /** */
+    AutoAdjustCommandArg(String name) {
+        this.name = name;
+    }
+
+    /** {@inheritDoc} */
+    @Override public String argName() {
+        return name;
+    }
+
+    /** {@inheritDoc} */
+    @Override public String toString() {
+        return name;
+    }
+}

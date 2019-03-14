@@ -15,7 +15,27 @@
  * limitations under the License.
  */
 
+package org.apache.ignite.internal.jdbc2;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+
+import static org.apache.ignite.IgniteJdbcDriver.CFG_URL_PREFIX;
+
 /**
- * Contains security tests for compute closure.
+ * Jdbc v2 test for schema name case (in)sensitivity.
  */
-package org.apache.ignite.internal.processor.security.compute.closure;
+public class JdbcSchemaCaseSelfTest extends JdbcAbstractSchemaCaseTest {
+    /** JDBC URL. */
+    private static final String BASE_URL = CFG_URL_PREFIX + "cache=test0@modules/clients/src/test/config/jdbc-config.xml";
+
+    /** {@inheritDoc} */
+    @Override protected Connection connect(String schema) throws SQLException {
+        Connection conn = DriverManager.getConnection(BASE_URL);
+
+        conn.setSchema(schema);
+
+        return conn;
+    }
+}

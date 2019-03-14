@@ -138,7 +138,7 @@ import org.apache.ignite.internal.processors.query.schema.SchemaExchangeWorkerTa
 import org.apache.ignite.internal.processors.query.schema.SchemaNodeLeaveExchangeWorkerTask;
 import org.apache.ignite.internal.processors.query.schema.message.SchemaAbstractDiscoveryMessage;
 import org.apache.ignite.internal.processors.query.schema.message.SchemaProposeDiscoveryMessage;
-import org.apache.ignite.internal.processors.security.SecurityContextHolder;
+import org.apache.ignite.internal.processors.security.OperationSecurityContext;
 import org.apache.ignite.internal.processors.security.SecurityContext;
 import org.apache.ignite.internal.processors.service.GridServiceProcessor;
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObject;
@@ -178,6 +178,8 @@ import org.apache.ignite.spi.discovery.DiscoveryDataBag;
 import org.apache.ignite.spi.discovery.DiscoveryDataBag.GridDiscoveryData;
 import org.apache.ignite.spi.discovery.DiscoveryDataBag.JoiningNodeDiscoveryData;
 import org.apache.ignite.spi.encryption.EncryptionSpi;
+import org.apache.ignite.spi.indexing.IndexingSpi;
+import org.apache.ignite.spi.indexing.noop.NoopIndexingSpi;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -189,6 +191,7 @@ import static org.apache.ignite.cache.CacheAtomicityMode.TRANSACTIONAL_SNAPSHOT;
 import static org.apache.ignite.cache.CacheMode.LOCAL;
 import static org.apache.ignite.cache.CacheMode.PARTITIONED;
 import static org.apache.ignite.cache.CacheMode.REPLICATED;
+import static org.apache.ignite.cache.CacheRebalanceMode.NONE;
 import static org.apache.ignite.cache.CacheRebalanceMode.SYNC;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_ASYNC;
 import static org.apache.ignite.cache.CacheWriteSynchronizationMode.FULL_SYNC;
@@ -536,6 +539,9 @@ public class GridCacheProcessor extends GridProcessorAdapter {
             assertParameter(!cc.isWriteBehindEnabled(),
                 "writeBehindEnabled cannot be used with TRANSACTIONAL_SNAPSHOT atomicity mode");
 
+            assertParameter(cc.getRebalanceMode() != NONE,
+                "Rebalance mode NONE cannot be used with TRANSACTIONAL_SNAPSHOT atomicity mode");
+
             ExpiryPolicy expPlc = null;
 
             if (cc.getExpiryPolicyFactory() instanceof FactoryBuilder.SingletonFactory)
@@ -561,6 +567,11 @@ public class GridCacheProcessor extends GridProcessorAdapter {
                     ", dataRegionName=" + memPlcName + ", pageEvictionMode=" +
                     dataRegion.config().getPageEvictionMode() + ']');
             }
+
+            IndexingSpi idxSpi = ctx.config().getIndexingSpi();
+
+            assertParameter(idxSpi == null || idxSpi instanceof NoopIndexingSpi,
+                "Custom IndexingSpi cannot be used with TRANSACTIONAL_SNAPSHOT atomicity mode");
         }
 
         if (cc.isWriteBehindEnabled()) {
@@ -3341,7 +3352,7 @@ public class GridCacheProcessor extends GridProcessorAdapter {
 
             for (CacheJoinNodeDiscoveryData.CacheInfo cacheInfo : nodeData.caches().values()) {
                 if (secCtx != null && cacheInfo.cacheType() == CacheType.USER) {
-                    try (SecurityContextHolder s = ctx.security().replaceContext(secCtx)) {
+                    try (OperationSecurityContext s = ctx.security().withContext(secCtx)) {
                         authorizeCacheCreate(cacheInfo.cacheData().config());
                     }
                     catch (SecurityException ex) {
