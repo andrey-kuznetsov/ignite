@@ -61,7 +61,7 @@ import org.apache.ignite.internal.processors.cache.DynamicCacheChangeRequest;
 import org.apache.ignite.internal.processors.cluster.ChangeGlobalStateMessage;
 import org.apache.ignite.internal.processors.cluster.DiscoveryDataClusterState;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
-import org.apache.ignite.internal.processors.security.SecurityContextHolder;
+import org.apache.ignite.internal.processors.security.OperationSecurityContext;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
@@ -1180,7 +1180,7 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
             try {
                 srvc = copyAndInject(cfg);
 
-                try (SecurityContextHolder ignored = ctx.security().replaceContext(srvcInfo.originNodeId())) {
+                try (OperationSecurityContext ignored = ctx.security().withContext(srvcInfo.originNodeId())) {
                     srvc.init(srvcCtx);
                 }
 
@@ -1206,7 +1206,7 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
 
             exe.execute(new Runnable() {
                 @Override public void run() {
-                    try (SecurityContextHolder ignored = ctx.security().replaceContext(srvcInfo.originNodeId())) {
+                    try (OperationSecurityContext ignored = ctx.security().withContext(srvcInfo.originNodeId())) {
                         srvc.execute(srvcCtx);
                     }
                     catch (InterruptedException | IgniteInterruptedCheckedException ignore) {
@@ -1312,7 +1312,7 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
         Service srvc = ctx.service();
 
         if (srvc != null) {
-            try (SecurityContextHolder ignored = this.ctx.security().replaceContext(info.originNodeId())) {
+            try (OperationSecurityContext ignored = this.ctx.security().withContext(info.originNodeId())) {
                 srvc.cancel(ctx);
             }
             catch (Throwable e) {
