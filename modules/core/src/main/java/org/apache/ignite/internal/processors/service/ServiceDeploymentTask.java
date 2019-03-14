@@ -290,7 +290,7 @@ class ServiceDeploymentTask {
             srvcProc.deployment().deployerBlockingSectionBegin();
 
             try {
-                srvcProc.undeploy(srvcId);
+                srvcProc.undeploy(desc);
             }
             finally {
                 srvcProc.deployment().deployerBlockingSectionEnd();
@@ -316,7 +316,7 @@ class ServiceDeploymentTask {
                         srvcProc.deployment().deployerBlockingSectionBegin();
 
                         try {
-                            srvcProc.redeploy(srvcId, cfg, top);
+                            srvcProc.redeploy(srvcId, cfg, top, desc);
                         }
                         finally {
                             srvcProc.deployment().deployerBlockingSectionEnd();
@@ -485,7 +485,7 @@ class ServiceDeploymentTask {
                             ServiceConfiguration cfg = desc.configuration();
 
                             try {
-                                srvcProc.redeploy(srvcId, cfg, top);
+                                srvcProc.redeploy(srvcId, cfg, top, desc);
                             }
                             catch (IgniteCheckedException e) {
                                 log.error("Error occured during cancel exceed service instances: " +

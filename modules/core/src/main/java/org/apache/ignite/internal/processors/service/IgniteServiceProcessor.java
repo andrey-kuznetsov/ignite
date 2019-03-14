@@ -60,6 +60,7 @@ import org.apache.ignite.internal.processors.cache.DynamicCacheChangeRequest;
 import org.apache.ignite.internal.processors.cluster.ChangeGlobalStateMessage;
 import org.apache.ignite.internal.processors.cluster.DiscoveryDataClusterState;
 import org.apache.ignite.internal.processors.cluster.IgniteChangeGlobalStateSupport;
+import org.apache.ignite.internal.processors.security.SecurityContextHolder;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
 import org.apache.ignite.internal.util.future.GridFinishedFuture;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
@@ -287,28 +288,34 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
     private void cancelDeployedServices() {
         assert opsLock.isWriteLockedByCurrentThread();
 
-        deployedServices.clear();
+        locServices.forEach((srvcId, srvcCtxs) -> {
+            ServiceInfo srvcInfo = deployedServices.get(srvcId);
 
-        locServices.values().stream().flatMap(Collection::stream).forEach(srvcCtx -> {
-            cancel(srvcCtx);
+            assert srvcInfo != null;
 
-            if (ctx.isStopping()) {
-                try {
-                    if (log.isInfoEnabled()) {
-                        log.info("Shutting down distributed service [name=" + srvcCtx.name() + ", execId8=" +
-                            U.id8(srvcCtx.executionId()) + ']');
+            srvcCtxs.forEach(srvcCtx -> {
+                cancel(srvcCtx, srvcInfo);
+
+                if (ctx.isStopping()) {
+                    try {
+                        if (log.isInfoEnabled()) {
+                            log.info("Shutting down distributed service [name=" + srvcCtx.name() + ", execId8=" +
+                                U.id8(srvcCtx.executionId()) + ']');
+                        }
+
+                        srvcCtx.executor().awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
                     }
+                    catch (InterruptedException ignore) {
+                        Thread.currentThread().interrupt();
 
-                    srvcCtx.executor().awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
+                        U.error(log, "Got interrupted while waiting for service to shutdown (will continue " +
+                            "stopping node): " + srvcCtx.name());
+                    }
                 }
-                catch (InterruptedException ignore) {
-                    Thread.currentThread().interrupt();
-
-                    U.error(log, "Got interrupted while waiting for service to shutdown (will continue " +
-                        "stopping node): " + srvcCtx.name());
-                }
-            }
+            });
         });
+
+        deployedServices.clear();
 
         locServices.clear();
     }
@@ -1128,10 +1135,11 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
      * @param srvcId Service id.
      * @param cfg Service configuration.
      * @param top Service topology.
+     * @param srvcInfo Service info.
      * @throws IgniteCheckedException In case of deployment errors.
      */
     void redeploy(IgniteUuid srvcId, ServiceConfiguration cfg,
-        Map<UUID, Integer> top) throws IgniteCheckedException {
+        Map<UUID, Integer> top, ServiceInfo srvcInfo) throws IgniteCheckedException {
         String name = cfg.getName();
         String cacheName = cfg.getCacheName();
         Object affKey = cfg.getAffinityKey();
@@ -1146,7 +1154,7 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
             if (ctxs.size() > assignCnt) {
                 int cancelCnt = ctxs.size() - assignCnt;
 
-                cancel(ctxs, cancelCnt);
+                cancel(ctxs, cancelCnt, srvcInfo);
             }
             else if (ctxs.size() < assignCnt) {
                 int createCnt = assignCnt - ctxs.size();
@@ -1171,8 +1179,9 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
             try {
                 srvc = copyAndInject(cfg);
 
-                // Initialize service.
-                srvc.init(srvcCtx);
+                try (SecurityContextHolder ignored = ctx.security().replaceContext(srvcInfo.originNodeId())) {
+                    srvc.init(srvcCtx);
+                }
 
                 srvcCtx.service(srvc);
             }
@@ -1196,7 +1205,7 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
 
             exe.execute(new Runnable() {
                 @Override public void run() {
-                    try {
+                    try (SecurityContextHolder ignored = ctx.security().replaceContext(srvcInfo.originNodeId())) {
                         srvc.execute(srvcCtx);
                     }
                     catch (InterruptedException | IgniteInterruptedCheckedException ignore) {
@@ -1270,10 +1279,11 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
     /**
      * @param ctxs Contexts to cancel.
      * @param cancelCnt Number of contexts to cancel.
+     * @param info Service info.
      */
-    private void cancel(Iterable<ServiceContextImpl> ctxs, int cancelCnt) {
+    private void cancel(Iterable<ServiceContextImpl> ctxs, int cancelCnt, ServiceInfo info) {
         for (Iterator<ServiceContextImpl> it = ctxs.iterator(); it.hasNext(); ) {
-            cancel(it.next());
+            cancel(it.next(), info);
 
             it.remove();
 
@@ -1286,8 +1296,9 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
      * Perform cancelation on given service context.
      *
      * @param ctx Service context.
+     * @param info Service info.
      */
-    private void cancel(ServiceContextImpl ctx) {
+    private void cancel(ServiceContextImpl ctx, ServiceInfo info) {
         // Flip cancelled flag.
         ctx.setCancelled(true);
 
@@ -1295,7 +1306,7 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
         Service srvc = ctx.service();
 
         if (srvc != null) {
-            try {
+            try (SecurityContextHolder ignored = this.ctx.security().replaceContext(info.originNodeId())) {
                 srvc.cancel(ctx);
             }
             catch (Throwable e) {
@@ -1330,14 +1341,14 @@ public class IgniteServiceProcessor extends ServiceProcessorAdapter implements I
      * <p/>
      * Invokes from services deployment worker.
      *
-     * @param srvcId Service id.
+     * @param info Service info.
      */
-    void undeploy(@NotNull IgniteUuid srvcId) {
-        Collection<ServiceContextImpl> ctxs = locServices.remove(srvcId);
+    void undeploy(@NotNull ServiceInfo info) {
+        Collection<ServiceContextImpl> ctxs = locServices.remove(info.serviceId());
 
         if (ctxs != null) {
             synchronized (ctxs) {
-                cancel(ctxs, ctxs.size());
+                cancel(ctxs, ctxs.size(), info);
             }
         }
     }
