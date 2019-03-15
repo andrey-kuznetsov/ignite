@@ -29,6 +29,7 @@ import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.marshaller.Marshaller;
 import org.apache.ignite.plugin.security.SecurityException;
 import org.apache.ignite.plugin.security.SecurityPermission;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Security utilities.
@@ -100,7 +101,10 @@ public class SecurityUtils {
      * @param node Node.
      * @return Node's security context.
      */
-    public static SecurityContext nodeSecurityContext(Marshaller marsh, ClassLoader ldr, ClusterNode node) {
+    public static SecurityContext nodeSecurityContext(
+        @NotNull Marshaller marsh,
+        @NotNull ClassLoader ldr,
+        @NotNull ClusterNode node) {
         byte[] subjBytes = node.attribute(IgniteNodeAttributes.ATTR_SECURITY_SUBJECT_V2);
 
         if (subjBytes == null)

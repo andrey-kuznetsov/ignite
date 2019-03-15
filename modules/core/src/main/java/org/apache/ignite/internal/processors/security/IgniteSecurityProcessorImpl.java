@@ -19,6 +19,7 @@ package org.apache.ignite.internal.processors.security;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.ignite.IgniteCheckedException;
@@ -98,13 +99,10 @@ public class IgniteSecurityProcessorImpl implements IgniteSecurityProcessor, Gri
 
     /** {@inheritDoc} */
     @Override public OperationSecurityContext withContext(UUID nodeId) {
-        return withContext(
-            secCtxs.computeIfAbsent(nodeId,
-                uuid -> nodeSecurityContext(
-                    marsh, U.resolveClassLoader(ctx.config()), ctx.discovery().node(uuid)
-                )
-            )
-        );
+        return withContext(secCtxs.computeIfAbsent(nodeId, uuid ->
+            Optional.ofNullable(ctx.discovery().node(uuid))
+                .map(node -> nodeSecurityContext(marsh, U.resolveClassLoader(ctx.config()), node))
+                .orElseThrow(() -> new SecurityException("No cluster node found by id: " + nodeId))));
     }
 
     /** {@inheritDoc} */
