@@ -21,6 +21,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BinaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -44,6 +46,7 @@ import org.apache.ignite.testframework.GridTestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -73,7 +76,7 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
     /**
      *
      */
-    private static class PlainTestServiceImpl implements TestService {
+    private abstract static class AbstractPlainTestService implements TestService {
         /** */
         @IgniteInstanceResource
         Ignite ignite;
@@ -81,14 +84,19 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
         /** */
         boolean isDone;
 
+        /** */
+        abstract void doCacheOperations(Runnable r);
+
         /**
          *
          */
         @Override public synchronized void init(ServiceContext ctx) {
             isDone = false;
 
-            cachePut("kInitPut", "vInitPut");
-            cacheRemove("kInitRemove");
+            doCacheOperations(() -> {
+                cachePut("kInitPut", "vInitPut");
+                cacheRemove("kInitRemove");
+            });
         }
 
         /**
@@ -96,8 +104,10 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
          */
         @Override public synchronized void execute(ServiceContext ctx) {
             try {
-                cachePut("kExecPut", "vExecPut");
-                cacheRemove("kExecRemove");
+                doCacheOperations(() -> {
+                    cachePut("kExecPut", "vExecPut");
+                    cacheRemove("kExecRemove");
+                });
             }
             finally {
                 isDone = true;
@@ -121,16 +131,20 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
                 }
             }
 
-            cachePut("kCancelPut", "vCancelPut");
-            cacheRemove("kCancelRemove");
+            doCacheOperations(() -> {
+                cachePut("kCancelPut", "vCancelPut");
+                cacheRemove("kCancelRemove");
+            });
         }
 
         /**
          *
          */
         @Override public void run() {
-            cachePut("kInvokePut", "vInvokePut");
-            cacheRemove("kInvokeRemove");
+            doCacheOperations(() -> {
+                cachePut("kInvokePut", "vInvokePut");
+                cacheRemove("kInvokeRemove");
+            });
         }
 
         /**
@@ -157,6 +171,52 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
     /**
      *
      */
+    private static class PlainTestServiceSyncImpl extends AbstractPlainTestService {
+        /**
+         *
+         */
+        @Override void doCacheOperations(Runnable r) {
+            r.run();
+        }
+    }
+
+    /**
+     *
+     */
+    private static class PlainTestServiceAsyncNewThreadImpl extends AbstractPlainTestService {
+        /**
+         *
+         */
+        @Override void doCacheOperations(Runnable r) {
+            Thread t = new Thread(r);
+
+            t.start();
+
+            try {
+                t.join(5000);
+            }
+            catch (InterruptedException ignored) {}
+        }
+    }
+
+    /**
+     *
+     */
+    private static class PlainTestServiceAsyncCommonPoolImpl extends AbstractPlainTestService {
+        /**
+         *
+         */
+        @Override void doCacheOperations(Runnable r) {
+            try {
+                CompletableFuture.runAsync(r).get(5, TimeUnit.SECONDS);
+            }
+            catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     *
+     */
     @Before
     public void before() throws Exception {
         cleanPersistenceDir();
@@ -176,7 +236,32 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
      *
      */
     @Test
-    public void testPlain() throws Exception {
+    public void testPlainSyncCacheOperations() throws Exception {
+        doTestPlain(new PlainTestServiceSyncImpl());
+    }
+
+    /**
+     *
+     */
+    @Test
+    @Ignore("IMDBGG-1576")
+    public void testPlainWithCacheOperationsInNewThread() throws Exception {
+        doTestPlain(new PlainTestServiceAsyncNewThreadImpl());
+    }
+
+    /**
+     *
+     */
+    @Test
+    @Ignore("IMDBGG-1576")
+    public void testPlainWithCacheOperationsInCommonPool() throws Exception {
+        doTestPlain(new PlainTestServiceAsyncCommonPoolImpl());
+    }
+
+    /**
+     *
+     */
+    private void doTestPlain(AbstractPlainTestService svc) throws Exception {
         SecurityPermissionSet permSet0 = builder()
             .appendCachePermissions(DEFAULT_CACHE_NAME, CACHE_READ)
             .appendServicePermissions(TEST_SERVICE_NAME, SERVICE_DEPLOY, SERVICE_INVOKE, SERVICE_CANCEL)
@@ -202,7 +287,7 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
 
         IgniteServices svcs = remoteServices(ignite0);
 
-        svcs.deployNodeSingleton(TEST_SERVICE_NAME, new PlainTestServiceImpl());
+        svcs.deployNodeSingleton(TEST_SERVICE_NAME, svc);
 
         Runnable svcProxy = svcs.serviceProxy(TEST_SERVICE_NAME, Runnable.class, true);
 
@@ -253,7 +338,7 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
          *
          */
         @Override public void execute(ServiceContext ctx) {
-            remoteServices(ignite).deployNodeSingleton(TEST_SERVICE_NAME, new PlainTestServiceImpl());
+            remoteServices(ignite).deployNodeSingleton(TEST_SERVICE_NAME, new PlainTestServiceSyncImpl());
 
             executed = true;
         }
