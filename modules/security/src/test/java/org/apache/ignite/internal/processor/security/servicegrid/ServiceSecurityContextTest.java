@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BinaryOperator;
 import java.util.stream.Collectors;
@@ -67,6 +69,9 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
     /** */
     private static final String TEST_SERVICE_NAME = "testService";
 
+    /** */
+    private static final ConcurrentMap<String, Boolean> OPERATIONS_STATUS = new ConcurrentHashMap<>();
+
     /**
      *
      */
@@ -94,8 +99,8 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
             isDone = false;
 
             doCacheOperations(() -> {
-                cachePut("kInitPut", "vInitPut");
-                cacheRemove("kInitRemove");
+                cachePut("init/put", "nevermind");
+                cacheRemove("init/remove");
             });
         }
 
@@ -105,8 +110,8 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
         @Override public synchronized void execute(ServiceContext ctx) {
             try {
                 doCacheOperations(() -> {
-                    cachePut("kExecPut", "vExecPut");
-                    cacheRemove("kExecRemove");
+                    cachePut("exec/put", "nevermind");
+                    cacheRemove("exec/remove");
                 });
             }
             finally {
@@ -132,8 +137,8 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
             }
 
             doCacheOperations(() -> {
-                cachePut("kCancelPut", "vCancelPut");
-                cacheRemove("kCancelRemove");
+                cachePut("cancel/put", "nevermind");
+                cacheRemove("cancel/remove");
             });
         }
 
@@ -142,8 +147,8 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
          */
         @Override public void run() {
             doCacheOperations(() -> {
-                cachePut("kInvokePut", "vInvokePut");
-                cacheRemove("kInvokeRemove");
+                cachePut("invoke/put", "nevermind");
+                cacheRemove("invoke/remove");
             });
         }
 
@@ -153,8 +158,12 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
         void cachePut(String k, String v) {
             try {
                 ignite.getOrCreateCache(DEFAULT_CACHE_NAME).put(k, v);
+
+                OPERATIONS_STATUS.put(k, true);
             }
-            catch (SecurityException ignored) {}
+            catch (SecurityException ignored) {
+                OPERATIONS_STATUS.put(k, false);
+            }
         }
 
         /**
@@ -163,8 +172,12 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
         void cacheRemove(String k) {
             try {
                 ignite.getOrCreateCache(DEFAULT_CACHE_NAME).remove(k);
+
+                OPERATIONS_STATUS.put(k, true);
             }
-            catch (SecurityException ignored) {}
+            catch (SecurityException ignored) {
+                OPERATIONS_STATUS.put(k, false);
+            }
         }
     }
 
@@ -220,6 +233,8 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
     @Before
     public void before() throws Exception {
         cleanPersistenceDir();
+
+        OPERATIONS_STATUS.clear();
     }
 
     /**
@@ -280,10 +295,10 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
 
         IgniteCache<String, String> cache1 = ignite1.getOrCreateCache(DEFAULT_CACHE_NAME);
 
-        cache1.put("kInitRemove", "vInitRemove");
-        cache1.put("kExecRemove", "vExecRemove");
-        cache1.put("kInvokeRemove", "vInvokeRemove");
-        cache1.put("kCancelRemove", "vCancelRemove");
+        String[] lifecycle = { "init", "exec", "invoke", "cancel" };
+
+        for (String phase : lifecycle)
+            cache1.put(phase + "/remove", "nevermind");
 
         IgniteServices svcs = remoteServices(ignite0);
 
@@ -295,15 +310,10 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
 
         svcs.cancel(TEST_SERVICE_NAME);
 
-        assertNull(cache1.get("kInitPut"));
-        assertNull(cache1.get("kExecPut"));
-        assertNull(cache1.get("kInvokePut"));
-        assertNull(cache1.get("kCancelPut"));
-
-        assertEquals("vInitRemove", cache1.get("kInitRemove"));
-        assertEquals("vExecRemove", cache1.get("kExecRemove"));
-        assertEquals("vInvokeRemove", cache1.get("kInvokeRemove"));
-        assertEquals("vCancelRemove", cache1.get("kCancelRemove"));
+        for (String phase : lifecycle) {
+            assertFalse("Put operation should fail on " + phase, OPERATIONS_STATUS.remove(phase + "/put"));
+            assertFalse("Remove operation should fail on " + phase, OPERATIONS_STATUS.remove(phase + "/remove"));
+        }
     }
 
     /**
@@ -386,10 +396,10 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
 
         IgniteCache<String, String> cache1 = ignite1.getOrCreateCache(DEFAULT_CACHE_NAME);
 
-        cache1.put("kInitRemove", "vInitRemove");
-        cache1.put("kExecRemove", "vExecRemove");
-        cache1.put("kInvokeRemove", "vInvokeRemove");
-        cache1.put("kCancelRemove", "vCancelRemove");
+        String[] lifecycle = { "init", "exec", "invoke", "cancel" };
+
+        for (String phase : lifecycle)
+            cache1.put(phase + "/remove", "nevermind");
 
         IgniteServices svcs = localServices(ignite0);
 
@@ -404,15 +414,10 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
         svcs.cancel(derivingTestSrvcName);
         assertTrue(GridTestUtils.waitForCondition(() -> DerivingTestServiceImpl.cancelled, 3000));
 
-        assertNull(cache1.get("kInitPut"));
-        assertNull(cache1.get("kExecPut"));
-        assertNull(cache1.get("kInvokePut"));
-        assertNull(cache1.get("kCancelPut"));
-
-        assertEquals("vInitRemove", cache1.get("kInitRemove"));
-        assertEquals("vExecRemove", cache1.get("kExecRemove"));
-        assertEquals("vInvokeRemove", cache1.get("kInvokeRemove"));
-        assertEquals("vCancelRemove", cache1.get("kCancelRemove"));
+        for (String phase : lifecycle) {
+            assertFalse("Put operation should fail on " + phase, OPERATIONS_STATUS.remove(phase + "/put"));
+            assertFalse("Remove operation should fail on " + phase, OPERATIONS_STATUS.remove(phase + "/remove"));
+        }
     }
 
     /**
@@ -472,7 +477,6 @@ public class ServiceSecurityContextTest extends AbstractSecurityTest {
                     .boxed()
                     .collect(Collectors.toList());
 
-                System.out.println("*** adding job for node " + node.id());
                 result.put(new ComputeJobAdapter() {
                     @Override public Integer execute() throws IgniteException {
                         return ints.stream().reduce(0, reducer);
