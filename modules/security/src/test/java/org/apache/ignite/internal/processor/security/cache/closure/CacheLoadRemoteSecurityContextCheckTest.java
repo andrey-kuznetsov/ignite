@@ -17,13 +17,11 @@
 
 package org.apache.ignite.internal.processor.security.cache.closure;
 
-import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.UUID;
 import javax.cache.Cache;
 import javax.cache.configuration.Factory;
-import javax.cache.integration.CacheLoaderException;
-import org.apache.ignite.Ignite;
 import org.apache.ignite.Ignition;
 import org.apache.ignite.cache.CacheMode;
 import org.apache.ignite.cache.store.CacheStoreAdapter;
@@ -31,9 +29,7 @@ import org.apache.ignite.configuration.CacheConfiguration;
 import org.apache.ignite.internal.processor.security.AbstractCacheOperationRemoteSecurityContextCheckTest;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.lang.IgniteBiInClosure;
-import org.apache.ignite.lang.IgniteBiPredicate;
 import org.apache.ignite.lang.IgniteRunnable;
-import org.apache.ignite.resources.IgniteInstanceResource;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -41,33 +37,12 @@ import org.junit.runners.JUnit4;
 /**
  * Testing operation security context when the filter of Load cache is executed on remote node.
  * <p>
- * The initiator node broadcasts a task to feature call node that starts load cache with filter. That filter is
- * executed on feature transition node and broadcasts a task to endpoint nodes. On every step, it is performed
+ * The initiator node broadcasts a task to 'run' node that starts load cache with filter. That filter is
+ * executed on 'check' node and broadcasts a task to 'endpoint' nodes. On every step, it is performed
  * verification that operation security context is the initiator context.
  */
 @RunWith(JUnit4.class)
 public class CacheLoadRemoteSecurityContextCheckTest extends AbstractCacheOperationRemoteSecurityContextCheckTest {
-    /** Transition load cache. */
-    private static final String TRANSITION_LOAD_CACHE = "TRANSITION_LOAD_CACHE";
-
-    /** Name of server initiator node. */
-    private static final String SRV_INITIATOR = "srv_initiator";
-
-    /** Name of client initiator node. */
-    private static final String CLNT_INITIATOR = "clnt_initiator";
-
-    /** Name of server feature call node. */
-    private static final String SRV_FEATURE_CALL = "srv_feature_call";
-
-    /** Name of server feature transit node. */
-    private static final String SRV_FEATURE_TRANSITION = "srv_feature_transition";
-
-    /** Name of server endpoint node. */
-    private static final String SRV_ENDPOINT = "srv_endpoint";
-
-    /** Name of client endpoint node. */
-    private static final String CLNT_ENDPOINT = "clnt_endpoint";
-
     /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {
         super.beforeTestsStarted();
@@ -76,24 +51,15 @@ public class CacheLoadRemoteSecurityContextCheckTest extends AbstractCacheOperat
 
         startClient(CLNT_INITIATOR, allowAllPermissionSet());
 
-        startGrid(SRV_FEATURE_CALL, allowAllPermissionSet());
+        startGrid(SRV_RUN, allowAllPermissionSet());
 
-        startGrid(SRV_FEATURE_TRANSITION, allowAllPermissionSet());
+        startGrid(SRV_CHECK, allowAllPermissionSet());
 
         startGrid(SRV_ENDPOINT, allowAllPermissionSet());
 
         startClient(CLNT_ENDPOINT, allowAllPermissionSet());
 
         G.allGrids().get(0).cluster().active(true);
-    }
-
-    /** {@inheritDoc} */
-    @Override protected void setupVerifier(Verifier verifier) {
-        verifier
-            .add(SRV_FEATURE_CALL, 1)
-            .add(SRV_FEATURE_TRANSITION, 1)
-            .add(SRV_ENDPOINT, 1)
-            .add(CLNT_ENDPOINT, 1);
     }
 
     /** {@inheritDoc} */
@@ -110,89 +76,41 @@ public class CacheLoadRemoteSecurityContextCheckTest extends AbstractCacheOperat
         };
     }
 
+    /** {@inheritDoc} */
+    @Override protected void setupVerifier(Verifier verifier) {
+        verifier
+            .expect(SRV_RUN, 1)
+            .expect(SRV_CHECK, 1)
+            .expect(SRV_ENDPOINT, 1)
+            .expect(CLNT_ENDPOINT, 1);
+    }
+
     /**
      *
      */
     @Test
     public void test() {
-        runAndCheck(SRV_INITIATOR);
-        runAndCheck(CLNT_INITIATOR);
+        IgniteRunnable checkCase = () -> {
+            register();
+
+            Ignition.localIgnite()
+                .<Integer, Integer>cache(CACHE_NAME).loadCache(
+                new RegisterExecAndForward<Integer, Integer>(SRV_CHECK, endpoints())
+            );
+        };
+
+        runAndCheck(grid(SRV_INITIATOR), checkCase);
+        runAndCheck(grid(CLNT_INITIATOR), checkCase);
     }
 
-    /**
-     * @param name Initiator node name.
-     */
-    private void runAndCheck(String name) {
-        runAndCheck(
-            secSubjectId(name),
-            () -> compute(grid(name), nodeId(SRV_FEATURE_CALL)).broadcast(
-                new IgniteRunnable() {
-                    @Override public void run() {
-                        register();
-
-                        loadCache(Ignition.localIgnite());
-                    }
-                }
-            )
-        );
+    /** {@inheritDoc} */
+    @Override protected Collection<UUID> nodesToRun() {
+        return Collections.singletonList(nodeId(SRV_RUN));
     }
 
-    /**
-     * @param node Node.
-     */
-    private void loadCache(Ignite node) {
-        node.<Integer, Integer>cache(CACHE_NAME).loadCache(
-            new TestClosure(SRV_FEATURE_TRANSITION, endpoints())
-        );
-    }
-
-    /**
-     * @return Collection of endpont nodes ids.
-     */
-    private Collection<UUID> endpoints() {
-        return Arrays.asList(
-            nodeId(SRV_ENDPOINT),
-            nodeId(CLNT_ENDPOINT)
-        );
-    }
-
-    /**
-     * Closure for tests.
-     */
-    static class TestClosure implements IgniteBiPredicate<Integer, Integer> {
-        /** Local ignite. */
-        @IgniteInstanceResource
-        private Ignite loc;
-
-        /** Expected local node name. */
-        private final String node;
-
-        /** Endpoint node id. */
-        private final Collection<UUID> endpoints;
-
-        /**
-         * @param node Expected local node name.
-         * @param endpoints Collection of endpont nodes ids.
-         */
-        public TestClosure(String node, Collection<UUID> endpoints) {
-            assert node != null;
-            assert !endpoints.isEmpty();
-
-            this.node = node;
-            this.endpoints = endpoints;
-        }
-
-        /** {@inheritDoc} */
-        @Override public boolean apply(Integer k, Integer v) {
-            if (node.equals(loc.name())) {
-                register();
-
-                compute(loc, endpoints)
-                    .broadcast(() -> register());
-            }
-
-            return false;
-        }
+    /** {@inheritDoc} */
+    @Override protected Collection<UUID> nodesToCheck() {
+        return Collections.singletonList(nodeId(SRV_CHECK));
     }
 
     /**
@@ -215,7 +133,7 @@ public class CacheLoadRemoteSecurityContextCheckTest extends AbstractCacheOperat
         }
 
         /** {@inheritDoc} */
-        @Override public Integer load(Integer key) throws CacheLoaderException {
+        @Override public Integer load(Integer key) {
             return key;
         }
 

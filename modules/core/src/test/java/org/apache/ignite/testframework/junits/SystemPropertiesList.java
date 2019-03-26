@@ -15,32 +15,19 @@
  * limitations under the License.
  */
 
-package org.apache.ignite.internal.processors.security;
+package org.apache.ignite.testframework.junits;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
  *
  */
-public class OperationSecurityContextImpl implements OperationSecurityContext {
-    /** Ignite Security processor. */
-    private final IgniteSecurityProcessor proc;
-
-    /** Security context. */
-    private final SecurityContext secCtx;
-
-    /**
-     * @param proc Ignite Security processor.
-     * @param secCtx Security context.
-     */
-    public OperationSecurityContextImpl(IgniteSecurityProcessor proc, SecurityContext secCtx) {
-        assert proc != null;
-        assert secCtx != null;
-
-        this.proc = proc;
-        this.secCtx = secCtx;
-    }
-
-    /** {@inheritDoc} */
-    @Override public void close() {
-        proc.withContext(secCtx);
-    }
+@Retention(RetentionPolicy.RUNTIME)
+@Target({ElementType.TYPE, ElementType.METHOD})
+public @interface SystemPropertiesList {
+    /** */
+    WithSystemProperty[] value();
 }

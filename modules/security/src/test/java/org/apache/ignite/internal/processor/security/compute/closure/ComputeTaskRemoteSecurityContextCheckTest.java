@@ -17,21 +17,19 @@
 
 package org.apache.ignite.internal.processor.security.compute.closure;
 
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.apache.ignite.Ignite;
-import org.apache.ignite.IgniteException;
 import org.apache.ignite.Ignition;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.compute.ComputeJob;
 import org.apache.ignite.compute.ComputeJobResult;
 import org.apache.ignite.compute.ComputeJobResultPolicy;
 import org.apache.ignite.compute.ComputeTask;
-import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processor.security.AbstractRemoteSecurityContextCheckTest;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.lang.IgniteRunnable;
@@ -42,35 +40,11 @@ import org.junit.Test;
 /**
  * Testing operation security context when the compute task is executed on remote nodes.
  * <p>
- * The initiator node broadcasts a task to feature call nodes that starts compute task. That compute task is executed
- * on feature transition nodes and broadcasts a task to endpoint nodes. On every step, it is performed verification that
+ * The initiator node broadcasts a task to 'run' nodes that starts compute task. That compute task is executed on
+ * 'check' nodes and broadcasts a task to 'endpoint' nodes. On every step, it is performed verification that
  * operation security context is the initiator context.
  */
 public class ComputeTaskRemoteSecurityContextCheckTest extends AbstractRemoteSecurityContextCheckTest {
-    /** Name of server initiator node. */
-    private static final String SRV_INITIATOR = "srv_initiator";
-
-    /** Name of client initiator node. */
-    private static final String CLNT_INITIATOR = "clnt_initiator";
-
-    /** Name of server feature call node. */
-    private static final String SRV_FEATURE_CALL = "srv_feature_call";
-
-    /** Name of client feature call node. */
-    private static final String CLNT_FEATURE_CALL = "clnt_feature_call";
-
-    /** Name of server feature transit node. */
-    private static final String SRV_FEATURE_TRANSITION = "srv_feature_transition";
-
-    /** Name of client feature transit node. */
-    private static final String CLNT_FEATURE_TRANSITION = "clnt_feature_transition";
-
-    /** Name of server endpoint node. */
-    private static final String SRV_ENDPOINT = "srv_endpoint";
-
-    /** Name of client endpoint node. */
-    private static final String CLNT_ENDPOINT = "clnt_endpoint";
-
     /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {
         super.beforeTestsStarted();
@@ -79,13 +53,13 @@ public class ComputeTaskRemoteSecurityContextCheckTest extends AbstractRemoteSec
 
         startClient(CLNT_INITIATOR, allowAllPermissionSet());
 
-        startGrid(SRV_FEATURE_CALL, allowAllPermissionSet());
+        startGrid(SRV_RUN, allowAllPermissionSet());
 
-        startClient(CLNT_FEATURE_CALL, allowAllPermissionSet());
+        startClient(CLNT_RUN, allowAllPermissionSet());
 
-        startGrid(SRV_FEATURE_TRANSITION, allowAllPermissionSet());
+        startGrid(SRV_CHECK, allowAllPermissionSet());
 
-        startClient(CLNT_FEATURE_TRANSITION, allowAllPermissionSet());
+        startClient(CLNT_CHECK, allowAllPermissionSet());
 
         startGrid(SRV_ENDPOINT, allowAllPermissionSet());
 
@@ -97,12 +71,12 @@ public class ComputeTaskRemoteSecurityContextCheckTest extends AbstractRemoteSec
     /** {@inheritDoc} */
     @Override protected void setupVerifier(Verifier verifier) {
         verifier
-            .add(SRV_FEATURE_CALL, 1)
-            .add(CLNT_FEATURE_CALL, 1)
-            .add(SRV_FEATURE_TRANSITION, 2)
-            .add(CLNT_FEATURE_TRANSITION, 2)
-            .add(SRV_ENDPOINT, 4)
-            .add(CLNT_ENDPOINT, 4);
+            .expect(SRV_RUN, 1)
+            .expect(CLNT_RUN, 1)
+            .expect(SRV_CHECK, 2)
+            .expect(CLNT_CHECK, 2)
+            .expect(SRV_ENDPOINT, 4)
+            .expect(CLNT_ENDPOINT, 4);
     }
 
     /**
@@ -110,77 +84,36 @@ public class ComputeTaskRemoteSecurityContextCheckTest extends AbstractRemoteSec
      */
     @Test
     public void test() {
-        runAndCheck(grid(SRV_INITIATOR));
-        runAndCheck(grid(CLNT_INITIATOR));
+        runAndCheck(grid(SRV_INITIATOR), checkCases());
+        runAndCheck(grid(CLNT_INITIATOR), checkCases());
     }
 
     /**
-     * @param initiator Node that initiates an execution.
+     * @return Stream of check cases.
      */
-    private void runAndCheck(IgniteEx initiator) {
-        runAndCheck(secSubjectId(initiator),
-            () -> compute(initiator, featureCalls()).broadcast(
-                new IgniteRunnable() {
-                    @Override public void run() {
-                        register();
+    private Stream<IgniteRunnable> checkCases() {
+        return Stream.of(
+            () -> {
+                register();
 
-                        Ignition.localIgnite().compute().execute(
-                            new TestComputeTask(featureTransitions(), endpoints()), 0
-                        );
-                    }
-                }
-            )
-        );
+                Ignition.localIgnite().compute().execute(
+                    new ComputeTaskClosure(nodesToCheck(), endpoints()), 0
+                );
+            },
+            () -> {
+                register();
 
-        runAndCheck(secSubjectId(initiator),
-            () -> compute(initiator, featureCalls()).broadcast(
-                new IgniteRunnable() {
-                    @Override public void run() {
-                        register();
-
-                        Ignition.localIgnite().compute().executeAsync(
-                            new TestComputeTask(featureTransitions(), endpoints()), 0
-                        ).get();
-                    }
-                }
-            )
-        );
-    }
-
-    /**
-     * @return Collection of feature call nodes ids.
-     */
-    private Collection<UUID> featureCalls() {
-        return Arrays.asList(
-            nodeId(SRV_FEATURE_CALL),
-            nodeId(CLNT_FEATURE_CALL)
-        );
-    }
-
-    /**
-     * @return Collection of feature transit nodes ids.
-     */
-    private Collection<UUID> featureTransitions() {
-        return Arrays.asList(
-            nodeId(SRV_FEATURE_TRANSITION),
-            nodeId(CLNT_FEATURE_TRANSITION)
-        );
-    }
-
-    /**
-     * @return Collection of endpont nodes ids.
-     */
-    private Collection<UUID> endpoints() {
-        return Arrays.asList(
-            nodeId(SRV_ENDPOINT),
-            nodeId(CLNT_ENDPOINT)
+                Ignition.localIgnite().compute().executeAsync(
+                    new ComputeTaskClosure(nodesToCheck(), endpoints()), 0
+                ).get();
+            }
         );
     }
 
     /**
      * Compute task for tests.
      */
-    static class TestComputeTask implements ComputeTask<Integer, Integer> {
+    static class ComputeTaskClosure implements ComputeTask<Integer, Integer> {
         /** Collection of transition node ids. */
         private final Collection<UUID> remotes;
 
@@ -189,13 +122,13 @@ public class ComputeTaskRemoteSecurityContextCheckTest extends AbstractRemoteSec
 
         /** Local ignite. */
         @IgniteInstanceResource
-        protected Ignite loc;
+        protected transient Ignite loc;
 
         /**
          * @param remotes Collection of transition node ids.
          * @param endpoints Collection of endpoint node ids.
          */
-        public TestComputeTask(Collection<UUID> remotes, Collection<UUID> endpoints) {
+        public ComputeTaskClosure(Collection<UUID> remotes, Collection<UUID> endpoints) {
             assert !remotes.isEmpty();
             assert !endpoints.isEmpty();
 
@@ -205,7 +138,7 @@ public class ComputeTaskRemoteSecurityContextCheckTest extends AbstractRemoteSec
 
         /** {@inheritDoc} */
         @Override public @Nullable Map<? extends ComputeJob, ClusterNode> map(List<ClusterNode> subgrid,
-            @Nullable Integer arg) throws IgniteException {
+            @Nullable Integer arg) {
             Map<ComputeJob, ClusterNode> res = new HashMap<>();
 
             for (UUID id : remotes) {
@@ -218,7 +151,7 @@ public class ComputeTaskRemoteSecurityContextCheckTest extends AbstractRemoteSec
                             // no-op
                         }
 
-                        @Override public Object execute() throws IgniteException {
+                        @Override public Object execute() {
                             register();
 
                             compute(loc, endpoints)
@@ -234,8 +167,7 @@ public class ComputeTaskRemoteSecurityContextCheckTest extends AbstractRemoteSec
         }
 
         /** {@inheritDoc} */
-        @Override public ComputeJobResultPolicy result(ComputeJobResult res,
-            List<ComputeJobResult> rcvd) throws IgniteException {
+        @Override public ComputeJobResultPolicy result(ComputeJobResult res, List<ComputeJobResult> rcvd) {
             if (res.getException() != null)
                 throw res.getException();
 
@@ -243,7 +175,7 @@ public class ComputeTaskRemoteSecurityContextCheckTest extends AbstractRemoteSec
         }
 
         /** {@inheritDoc} */
-        @Override public @Nullable Integer reduce(List<ComputeJobResult> results) throws IgniteException {
+        @Override public @Nullable Integer reduce(List<ComputeJobResult> results) {
             return null;
         }
     }

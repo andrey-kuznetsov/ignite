@@ -17,13 +17,10 @@
 
 package org.apache.ignite.internal.processor.security.compute.closure;
 
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.Ignition;
-import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.processor.security.AbstractRemoteSecurityContextCheckTest;
 import org.apache.ignite.internal.util.typedef.G;
 import org.apache.ignite.lang.IgniteRunnable;
@@ -34,36 +31,12 @@ import org.junit.runners.JUnit4;
 /**
  * Testing operation security context when the service task is executed on remote nodes.
  * <p>
- * The initiator node broadcasts a task to feature call nodes that starts service task. That service task is executed
- * on feature transition nodes and broadcasts a task to endpoint nodes. On every step, it is performed verification that
+ * The initiator node broadcasts a task to 'run' nodes that starts service task. That service task is executed
+ * on 'check' nodes and broadcasts a task to 'endpoint' nodes. On every step, it is performed verification that
  * operation security context is the initiator context.
  */
 @RunWith(JUnit4.class)
 public class ExecutorServiceRemoteSecurityContextCheckTest extends AbstractRemoteSecurityContextCheckTest {
-    /** Name of server initiator node. */
-    private static final String SRV_INITIATOR = "srv_initiator";
-
-    /** Name of client initiator node. */
-    private static final String CLNT_INITIATOR = "clnt_initiator";
-
-    /** Name of server feature call node. */
-    private static final String SRV_FEATURE_CALL = "srv_feature_call";
-
-    /** Name of client feature call node. */
-    private static final String CLNT_FEATURE_CALL = "clnt_feature_call";
-
-    /** Name of server feature transit node. */
-    private static final String SRV_FEATURE_TRANSITION = "srv_feature_transition";
-
-    /** Name of client feature transit node. */
-    private static final String CLNT_FEATURE_TRANSITION = "clnt_feature_transition";
-
-    /** Name of server endpoint node. */
-    private static final String SRV_ENDPOINT = "srv_endpoint";
-
-    /** Name of client endpoint node. */
-    private static final String CLNT_ENDPOINT = "clnt_endpoint";
-
     /** {@inheritDoc} */
     @Override protected void beforeTestsStarted() throws Exception {
         super.beforeTestsStarted();
@@ -72,13 +45,13 @@ public class ExecutorServiceRemoteSecurityContextCheckTest extends AbstractRemot
 
         startClient(CLNT_INITIATOR, allowAllPermissionSet());
 
-        startGrid(SRV_FEATURE_CALL, allowAllPermissionSet());
+        startGrid(SRV_RUN, allowAllPermissionSet());
 
-        startClient(CLNT_FEATURE_CALL, allowAllPermissionSet());
+        startClient(CLNT_RUN, allowAllPermissionSet());
 
-        startGrid(SRV_FEATURE_TRANSITION, allowAllPermissionSet());
+        startGrid(SRV_CHECK, allowAllPermissionSet());
 
-        startClient(CLNT_FEATURE_TRANSITION, allowAllPermissionSet());
+        startClient(CLNT_CHECK, allowAllPermissionSet());
 
         startGrid(SRV_ENDPOINT, allowAllPermissionSet());
 
@@ -90,12 +63,12 @@ public class ExecutorServiceRemoteSecurityContextCheckTest extends AbstractRemot
     /** {@inheritDoc} */
     @Override protected void setupVerifier(Verifier verifier) {
         verifier
-            .add(SRV_FEATURE_CALL, 1)
-            .add(CLNT_FEATURE_CALL, 1)
-            .add(SRV_FEATURE_TRANSITION, 2)
-            .add(CLNT_FEATURE_TRANSITION, 2)
-            .add(SRV_ENDPOINT, 4)
-            .add(CLNT_ENDPOINT, 4);
+            .expect(SRV_RUN, 1)
+            .expect(CLNT_RUN, 1)
+            .expect(SRV_CHECK, 2)
+            .expect(CLNT_CHECK, 2)
+            .expect(SRV_ENDPOINT, 4)
+            .expect(CLNT_ENDPOINT, 4);
     }
 
     /**
@@ -103,90 +76,25 @@ public class ExecutorServiceRemoteSecurityContextCheckTest extends AbstractRemot
      */
     @Test
     public void test() {
-        runAndCheck(grid(SRV_INITIATOR));
-        runAndCheck(grid(CLNT_INITIATOR));
-    }
-
-    /**
-     * Performs test case.
-     */
-    private void runAndCheck(IgniteEx initiator) {
-        runAndCheck(secSubjectId(initiator),
-            () -> compute(initiator, featureCalls()).broadcast(
-                new IgniteRunnable() {
-                    @Override public void run() {
-                        register();
-
-                        Ignite loc = Ignition.localIgnite();
-
-                        for (UUID nodeId : featureTransitions()) {
-                            ExecutorService svc = loc.executorService(loc.cluster().forNodeId(nodeId));
-
-                            try {
-                                svc.submit(new TestIgniteRunnable(endpoints())).get();
-                            }
-                            catch (Exception e) {
-                                throw new RuntimeException(e);
-                            }
-                        }
-                    }
-                }
-            )
-        );
-    }
-
-    /**
-     * @return Collection of feature call nodes ids.
-     */
-    private Collection<UUID> featureCalls() {
-        return Arrays.asList(
-            nodeId(SRV_FEATURE_CALL),
-            nodeId(CLNT_FEATURE_CALL)
-        );
-    }
-
-    /**
-     * @return Collection of feature transit nodes ids.
-     */
-    private Collection<UUID> featureTransitions() {
-        return Arrays.asList(
-            nodeId(SRV_FEATURE_TRANSITION),
-            nodeId(CLNT_FEATURE_TRANSITION)
-        );
-    }
-
-    /**
-     * @return Collection of endpont nodes ids.
-     */
-    private Collection<UUID> endpoints() {
-        return Arrays.asList(
-            nodeId(SRV_ENDPOINT),
-            nodeId(CLNT_ENDPOINT)
-        );
-    }
-
-    /**
-     * Runnable for tests.
-     */
-    static class TestIgniteRunnable implements IgniteRunnable {
-        /** Collection of endpoint node ids. */
-        private final Collection<UUID> endpoints;
-
-        /**
-         * @param endpoints Collection of endpoint node ids.
-         */
-        public TestIgniteRunnable(Collection<UUID> endpoints) {
-            assert !endpoints.isEmpty();
-
-            this.endpoints = endpoints;
-        }
-
-        /** {@inheritDoc} */
-        @Override public void run() {
+        IgniteRunnable checkCase = () -> {
             register();
 
-            compute(Ignition.localIgnite(), endpoints)
-                .broadcast(() -> register());
-        }
+            Ignite loc = Ignition.localIgnite();
+
+            for (UUID nodeId : nodesToCheck()) {
+                ExecutorService svc = loc.executorService(loc.cluster().forNodeId(nodeId));
+
+                try {
+                    svc.submit((Runnable) new RegisterExecAndForward<>(endpoints())).get();
+                }
+                catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        };
+
+
+        runAndCheck(grid(SRV_INITIATOR), checkCase);
+        runAndCheck(grid(CLNT_INITIATOR), checkCase);
     }
 }
